@@ -1,12 +1,26 @@
-# DataDotAI
+<p align="center">
+  <img src="Logo.png" alt="DataDotAI Logo" width="180">
+</p>
 
-> A Python-based DSL Communication Tool that bridges natural language, AI, and file operations through a strict JSON-based protocol.
+<h1 align="center">DataDotAI</h1>
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.8+-3776AB?logo=python&logoColor=white" alt="Python 3.8+">
+  <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL v3">
+</p>
+
+<p align="center">
+  <b>A Python-based DSL Communication Tool that bridges natural language, AI, and file operations through a strict JSON-based protocol.</b>
+</p>
+
+---
 
 ## Overview
 
-DataDotAI is a local AI-powered chatbot that understands file operations through a Domain-Specific Language (DSL). It connects a terminal interface, an AI backend (Mistral), and a file execution engine into a seamless pipeline for reading, writing, analyzing, and transforming documents.
+DataDotAI is a Python application that understands file operations through a **Domain-Specific Language (DSL)**. It connects a terminal interface, an AI backend, and a file execution engine into a seamless pipeline for reading, writing, analyzing, and transforming documents.
+
+**Architecture goal:** Support both **local AI models** (e.g., fine-tuned Llama, Gemma) and **cloud API providers** (e.g., Mistral, OpenAI, Anthropic).  
+**Current status:** API-only mode (Mistral) for ease of testing. Local model support is planned via the `Finetune/` pipeline.
 
 Instead of fine-tuning the AI on every possible command (which fails due to hardware limits and poor generalization), DataDotAI uses a **regex/embedded command system** where the AI pulls command descriptions from a structured registry when it needs to execute an action. Future versions will replace this with a **vector database** for semantic command retrieval.
 
@@ -53,7 +67,9 @@ Instead of fine-tuning the AI on every possible command (which fails due to hard
 
 ## JSON Communication Schema
 
-All messages between components follow this strict envelope:
+All messages between components follow this strict envelope. Every field has a specific contract — who writes it, who reads it, and what rules govern it.
+
+### The JSON Envelope
 
 ```json
 {
@@ -68,24 +84,80 @@ All messages between components follow this strict envelope:
 }
 ```
 
-| Field | Type | Mutable | Description |
-|-------|------|---------|-------------|
-| `message` | string | ✅ | Conversation text. Can include markdown formatting. Never contains commands. |
-| `action` | string | ✅ | Comma-separated command sequence. Lowercase, no spaces. Example: `load(a.xlsx),save(b.docx)` |
-| `data` | string | ✅ | Payload for read/write. Always a JSON-safe flat array of strings. |
-| `history` | array | ✅ | One-liner summaries of user requests/errors. Never logs AI commands. |
-| `folder` | string/object | ❌ | Working directory snapshot. AI always responds with empty `{}` to save tokens. |
-| `error` | string | ✅ | Backend error string. AI resolves internally; uses `clear()` if needed. |
-| `session_id` | string | ❌ | Unique session ID. Copied verbatim, never modified. |
-| `target` | array | ✅ | `["terminal"]` for display, `["executioner"]` for execution, `["ai"]` for AI processing. |
+### Field-by-Field Contract
 
-### Routing Rules
+| Field | Type | Who Writes | Who Reads | Mutable | Rules |
+|-------|------|------------|-----------|---------|-------|
+| `message` | string | AI | Terminal | ✅ | Conversation text only. Can include markdown (`**bold**`, `*italic*`, lists). **Never** contains commands. AI explains actions, asks questions, or reports results here. |
+| `action` | string | AI | Executioner | ✅ | Comma-separated command sequence. **Lowercase, no spaces.** Example: `load(a.xlsx),save(b.docx)`. Arguments preserve case. No escaping or newlines inside arguments. |
+| `data` | string | Executioner / AI | Executioner / AI | ✅ | Payload for read/write. Always a **JSON-safe flat array of strings**. When written by Executioner, it's the result of `get()` or file parsing. When written by AI, it's data to be posted to `current.txt`. |
+| `history` | array | AI | AI (context) | ✅ | One-liner summaries of **user requests, errors, or context**. AI **never** logs its own commands here. Backend logs executed actions. Copy existing history entirely, append new lines only. Keep short for token efficiency. |
+| `folder` | object | Terminal | Terminal | ❌ | Snapshot of the working directory. AI **always** responds with empty `{}` to save tokens. Never copies or edits this field from received JSON. |
+| `error` | string | Executioner / Communicator | AI | ✅ | Backend error string. AI resolves errors internally — never sets this field directly. If unresolvable, AI uses `clear()` command and appends a short note in `history`. |
+| `session_id` | string | Terminal | All | ❌ | Unique session ID. Copied verbatim by every component. Never modified. |
+| `target` | array | AI / Communicator | Communicator | ✅ | Routing directive. `["terminal"]` = display to user. `["executioner"]` = run commands. `["ai"]` = process by AI. Can combine: `["executioner", "terminal"]`. |
 
-1. **Invalid JSON** → Error JSON sent to AI
-2. **`error` field non-empty** → Sent to AI for resolution
-3. **`action` present or target includes `executioner`** → Sent to Executioner
-4. **No action + target includes `terminal`** → Sent to Terminal
-5. **Default fallback** → Sent to AI
+### Routing Rules (Communicator)
+
+The Communicator is the central router. It decides where each JSON message goes based on this priority order:
+
+```
+1. Invalid JSON format        → Wrap in error JSON → send_to_ai
+2. error field is non-empty   → send_to_ai (AI resolves)
+3. action field exists        → send_to_executioner
+4. target includes "executioner" → send_to_executioner
+5. target includes "terminal" AND no action → send_to_terminal
+6. Default fallback           → send_to_ai
+```
+
+**Why this matters:** The AI never decides routing directly. It sets `target` and `action`, and the Communicator enforces the rules. This prevents infinite loops and ensures errors always reach the AI for resolution.
+
+### Example Lifecycle
+
+**Step 1 — User asks a question:**
+```json
+{
+  "message": "Convert my budget spreadsheet to a Word document",
+  "action": "",
+  "data": "",
+  "history": [],
+  "folder": {"budget.xlsx": {}, "report.docx": {}},
+  "error": "",
+  "session_id": "sess_abc123",
+  "target": ["ai"]
+}
+```
+→ Communicator sees `target: ["ai"]`, no action → sends to AI.
+
+**Step 2 — AI responds with commands:**
+```json
+{
+  "message": "I converted 'budget.xlsx' to 'budget.docx'.",
+  "action": "load(budget.xlsx),save(budget.docx)",
+  "data": "",
+  "history": ["User asked to convert Excel to Word"],
+  "folder": {},
+  "error": "",
+  "session_id": "sess_abc123",
+  "target": ["executioner"]
+}
+```
+→ Communicator sees `action` → sends to Executioner.
+
+**Step 3 — Executioner runs commands, returns result:**
+```json
+{
+  "message": "I converted 'budget.xlsx' to 'budget.docx'.",
+  "action": "",
+  "data": "",
+  "history": ["User asked to convert Excel to Word", "Loaded budget.xlsx", "Saved budget.docx"],
+  "folder": {},
+  "error": "",
+  "session_id": "sess_abc123",
+  "target": ["terminal"]
+}
+```
+→ Communicator sees `target: ["terminal"]`, no action → sends to Terminal for display.
 
 ---
 
@@ -258,7 +330,7 @@ Sends `current.txt` content to the AI for analysis based on a natural-language q
 ---
 
 ### `make_report(filename)`
-Generates a clean AI report from a file. Content is chunked (~3000 chars) and sent to Mistral API.
+Generates a clean AI report from a file. Content is chunked (~3000 chars) and sent to AI API.
 
 **Example:**
 ```json
@@ -271,7 +343,7 @@ Generates a clean AI report from a file. Content is chunked (~3000 chars) and se
 ---
 
 ### `normalize(filetype)`
-Normalizes broken JSON in `current.txt` using AI. Splits into chunks, sends to Mistral with filetype-specific prompts.
+Normalizes broken JSON in `current.txt` using AI. Splits into chunks, sends to API with filetype-specific prompts.
 
 **Example:**
 ```json
@@ -328,7 +400,7 @@ cd DataDotAi
 # Install dependencies
 pip install -r requirements.txt
 
-# Set your Mistral API key
+# Set your API key (Mistral, or configure for another provider)
 echo "MISTRAL_API_KEY=your_key_here" > .env
 
 # Run
@@ -373,6 +445,7 @@ DataDotAI/
 ├── B_adapter.py              # UI adapter B
 ├── B_design.py               # UI design B
 ├── Ai.ico                    # Application icon
+├── Logo.png                  # Project logo
 ├── Executioner/
 │   ├── __init__.py           # JSON validation & routing
 │   ├── core.py               # Action parser & command executor
@@ -409,6 +482,7 @@ DataDotAI/
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| **Local Model Support** | Planned | Replace API-only mode with local model inference (Llama, Gemma) via the `Finetune/` pipeline. Architecture already supports pluggable AI backends. |
 | **Vector Database** | Planned | Replace regex command matching with semantic retrieval (e.g., ChromaDB, FAISS) so the AI pulls the most relevant command descriptions based on user intent |
 | **Command Enrichment** | Planned | Expand command registry with more file types, operations, and metadata |
 | **Better Parsing** | Planned | Improve DSL parsing robustness, handle edge cases, add validation layers |
