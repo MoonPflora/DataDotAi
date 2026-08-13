@@ -1,0 +1,6 @@
+Normalize CSV-exported JSON:
+- Keep column order.
+- Trim whitespace from cells.
+- Preserve rows.
+- Return a JSON array of rows.
+- Only output JSON.

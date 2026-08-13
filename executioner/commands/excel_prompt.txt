@@ -1,0 +1,5 @@
+Normalize Excel-exported JSON:
+- Preserve sheet and table structure.
+- Clean empty cells.
+- Return a JSON array with the same structure as input.
+- Only output JSON.

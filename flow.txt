@@ -1,0 +1,92 @@
+┌─────────────┐
+│  Terminal   │
+└──────┬──────┘
+       │ Sends JSON → handle_message(json_str)
+       │
+       ▼
+┌───────────────────────────────┐
+│    Communicator: handle_message │
+│                               │
+│  1. Parse JSON                │
+│     - If invalid → return error JSON to AI
+│  2. Truncate history
+│  3. Check error field
+│     - If error → send_to_ai
+│  4. Check action & target
+│     - No action & target includes terminal → send_to_terminal
+│     - Action & target includes executioner → send_to_executioner
+│  5. Default → send_to_ai
+└──────┬────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────┐
+│ Executioner (__init__.py)  │
+│                             │
+│ handle_message(json_str)    │
+│                             │
+│  1. Parse JSON, validate    │
+│     - If invalid → return error JSON to AI
+│  2. Ensure all mandatory keys exist
+│  3. Check error field
+│     - If non-empty → return JSON with target ["ai"]
+│  4. If action empty → set target ["terminal"] → return JSON
+│  5. Pass full JSON to execute_actions()
+└──────┬──────────────────────┘
+       │
+       ▼
+┌─────────────────────────────┐
+│ Core: execute_actions       │
+│                             │
+│  1. Split action string     │
+│  2. For each command:       │
+│     a) Read current.txt     │
+│     b) Parse command & args │
+│     c) Call COMMANDS[name]()│
+│         - load/save/append/etc
+│     d) Update json_data["data"] if applicable
+│     e) Append to history    │
+│  3. Exception in command?   │
+│     - Yes → populate error, clear action, set target ["ai"], return JSON
+│  4. All commands success?   │
+│     - Clear error, clear action, target ["terminal"], return JSON
+└──────┬──────────────────────┘
+       │
+       ▼
+┌───────────────────────────────┐
+│ Communicator: receive JSON     │
+│                               │
+│  1. If from AI (_ai_response_queue): │
+│     - Parse JSON
+│     - Clear 'error' field
+│     - Return sanitized JSON
+│  2. If from executioner/core: │
+│     - JSON returned as-is
+└──────┬────────────────────────┘
+       │
+       ▼
+┌───────────────────────────────┐
+│ Communicator: send_to_ai      │
+│                               │
+│  1. Send JSON to Mistral API  │
+│  2. Retry up to MAX_RETRIES    │
+│  3. If AI returns invalid JSON │
+│     - Wrap in standard JSON schema
+│  4. Put result in _ai_response_queue
+└──────┬────────────────────────┘
+       │
+       ▼
+┌───────────────┐
+│ Mistral AI    │
+│               │
+│ Receives JSON │
+│ Fills 'message', optionally modifies 'action', 'target', etc. │
+└──────┬────────┘
+       │
+       ▼
+┌───────────────────────────────┐
+│ Communicator receives AI JSON │
+│   - Error field cleared
+│   - Returned to handle_message
+│   - If JSON has action → can go back to executioner/core
+│   - If JSON target ["terminal"] → terminal displays it
+└───────────────────────────────┘

@@ -1,0 +1,5 @@
+Normalize text-exported JSON:
+- Remove extra whitespace and empty lines.
+- Preserve line order.
+- Return a JSON array of lines.
+- Only output JSON.
