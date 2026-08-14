@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Logo.png" alt="DataDotAI Logo" width="180">
+  <img src="ai.ico" alt="DataDotAI Logo" width="180">
 </p>
 
 <h1 align="center">DataDotAI</h1>
